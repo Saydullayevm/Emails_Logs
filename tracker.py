@@ -62,7 +62,7 @@ def report():
         open_times = opens.get(tid, [])
         open_count = len(open_times)
         first_open = open_times[0] if open_times else "—"
-        status = f"✅ {open_count}x (first: {first_open})" if open_count else "Not opened"
+        status = f"Opened {open_count}x time(s) (first: {first_open})" if open_count else "Not opened"
         rows += f"""
         <tr>
             <td>{info['name']}</td>
@@ -98,7 +98,7 @@ def report():
   </div>
   <table>
     <thead><tr>
-      <th>Name</th><th>Email</th><th>Pharmacy</th><th>Sent At</th><th>Opens</th>
+      <th>Name</th><th>Email</th><th>Pharmacy</th><th>Sent At</th><th>Opening Status</th>
     </tr></thead>
     <tbody>{rows}</tbody>
   </table>
