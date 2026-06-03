@@ -1,22 +1,13 @@
-from flask import Flask, request, send_file, Response
+from flask import Flask, request, Response, jsonify
 import csv
 import os
-import io
 import time
 
 app = Flask(__name__)
 
 OPENS_LOG = "opens_log.csv"
+SENT_LOG = "sent_log.csv"
 
-def log_open(tracking_id, ip):
-    file_exists = os.path.isfile(OPENS_LOG)
-    with open(OPENS_LOG, "a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        if not file_exists:
-            writer.writerow(["tracking_id", "opened_at", "ip"])
-        writer.writerow([tracking_id, time.strftime("%Y-%m-%d %H:%M:%S"), ip])
-
-# 1x1 transparent GIF in bytes
 TRANSPARENT_GIF = (
     b'\x47\x49\x46\x38\x39\x61\x01\x00\x01\x00\x80\x00\x00'
     b'\xff\xff\xff\x00\x00\x00\x21\xf9\x04\x00\x00\x00\x00'
@@ -24,20 +15,38 @@ TRANSPARENT_GIF = (
     b'\x44\x01\x00\x3b'
 )
 
+def append_csv(filepath, row, header):
+    file_exists = os.path.isfile(filepath)
+    with open(filepath, "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(header)
+        writer.writerow(row)
+
 @app.route("/track/open")
 def track_open():
     tracking_id = request.args.get("id", "unknown")
     ip = request.remote_addr
-    log_open(tracking_id, ip)
+    append_csv(OPENS_LOG,
+               [tracking_id, time.strftime("%Y-%m-%d %H:%M:%S"), ip],
+               ["tracking_id", "opened_at", "ip"])
     return Response(TRANSPARENT_GIF, mimetype="image/gif",
                     headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
 
+@app.route("/track/sent", methods=["POST"])
+def track_sent():
+    """Called by send_emails.py after each successful send."""
+    data = request.get_json()
+    append_csv(SENT_LOG,
+               [data["tracking_id"], data["email"], data["name"], data["pharmacy_name"], data["sent_at"]],
+               ["tracking_id", "email", "name", "pharmacy_name", "sent_at"])
+    return jsonify({"ok": True})
+
 @app.route("/report")
 def report():
-    """Quick HTML report: joins sent_log + opens_log"""
     sent = {}
-    if os.path.isfile("sent_log.csv"):
-        with open("sent_log.csv", newline="", encoding="utf-8") as f:
+    if os.path.isfile(SENT_LOG):
+        with open(SENT_LOG, newline="", encoding="utf-8") as f:
             for row in csv.DictReader(f):
                 sent[row["tracking_id"]] = row
 
@@ -46,16 +55,14 @@ def report():
         with open(OPENS_LOG, newline="", encoding="utf-8") as f:
             for row in csv.DictReader(f):
                 tid = row["tracking_id"]
-                if tid not in opens:
-                    opens[tid] = []
-                opens[tid].append(row["opened_at"])
+                opens.setdefault(tid, []).append(row["opened_at"])
 
     rows = ""
     for tid, info in sent.items():
         open_times = opens.get(tid, [])
         open_count = len(open_times)
         first_open = open_times[0] if open_times else "—"
-        status = f"✅ {open_count}x (first: {first_open})" if open_count else "❌ Not opened"
+        status = f"✅ {open_count}x (first: {first_open})" if open_count else "Not opened"
         rows += f"""
         <tr>
             <td>{info['name']}</td>
@@ -83,7 +90,7 @@ def report():
   </style>
 </head>
 <body>
-  <h2> Email Tracking Report</h2>
+  <h2>Email Tracking Report</h2>
   <div class="summary">
     Sent: <strong>{total}</strong> &nbsp;|&nbsp;
     Opened: <strong>{opened}</strong> &nbsp;|&nbsp;
