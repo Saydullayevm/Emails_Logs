@@ -83,7 +83,7 @@ def report():
   </style>
 </head>
 <body>
-  <h2>📬 Email Tracking Report</h2>
+  <h2> Email Tracking Report</h2>
   <div class="summary">
     Sent: <strong>{total}</strong> &nbsp;|&nbsp;
     Opened: <strong>{opened}</strong> &nbsp;|&nbsp;
