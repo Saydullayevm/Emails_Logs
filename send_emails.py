@@ -3,6 +3,8 @@ import smtplib
 import time
 import os
 import uuid
+import signal
+import atexit
 import requests
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -16,11 +18,51 @@ FROM_NAME          = os.getenv("FROM_NAME")
 TRACKING_SERVER    = os.getenv("TRACKING_SERVER")
 
 RATE_LIMIT_SECONDS = 60
+LOCAL_SENT_LOG     = "sent_log.csv"
 
-LOCAL_SENT_LOG = "sent_log.csv"
+_already_saved = False  
+
+def auto_download_on_exit():
+    """Called automatically whenever the script stops — Ctrl+C or normal end."""
+    global _already_saved
+    if _already_saved:
+        return
+    _already_saved = True
+
+    print("\n\n Script stopped — auto-downloading reports from Render...")
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    saved = []
+
+    for endpoint, filename in [
+        ("/download/opens", f"opens_log_{timestamp}.csv"),
+        ("/download/report", f"email_report_{timestamp}.csv"),
+    ]:
+        try:
+            r = requests.get(f"{TRACKING_SERVER}{endpoint}", timeout=10)
+            if r.status_code == 200 and r.text.strip():
+                with open(filename, "w", encoding="utf-8", newline="") as f:
+                    f.write(r.text)
+                saved.append(filename)
+                print(f"Saved → {filename}")
+            elif r.status_code == 404:
+                print(f"{endpoint} — no data on Render yet, skipping.")
+            else:
+                print(f"{endpoint} returned {r.status_code}, skipping.")
+        except Exception as e:
+            print(f"Could not fetch {endpoint}: {e}")
+
+    if saved:
+        print(f"\n Files saved in your project folder:")
+        for f in saved:
+            print(f"     {os.path.abspath(f)}")
+        print("   → Open email_report_*.csv directly in Google Sheets (File → Import → Upload)\n")
+    else:
+        print("Nothing downloaded (Render may have no data yet).\n")
+
+atexit.register(auto_download_on_exit)
+signal.signal(signal.SIGTERM, lambda *_: auto_download_on_exit())
 
 def save_sent_locally(tracking_id, email, name, pharmacy_name, sent_at):
-    """Write each sent email to a local sent_log.csv in your project folder."""
     file_exists = os.path.isfile(LOCAL_SENT_LOG)
     with open(LOCAL_SENT_LOG, "a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -30,7 +72,6 @@ def save_sent_locally(tracking_id, email, name, pharmacy_name, sent_at):
     print(f"Logged locally → {LOCAL_SENT_LOG}")
 
 def log_sent_to_server(tracking_id, email, name, pharmacy_name, sent_at):
-    """Also post to Render so the web report stays up to date."""
     try:
         r = requests.post(f"{TRACKING_SERVER}/track/sent", json={
             "tracking_id": tracking_id,
@@ -64,7 +105,8 @@ server.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
 with open("leads.csv", newline="", encoding="utf-8") as file:
     leads = list(csv.DictReader(file))
 
-print(f"Sending to {len(leads)} leads...\n")
+print(f"Sending to {len(leads)} leads...")
+print(f"Reports will auto-download if you press Ctrl+C or the script finishes.\n")
 
 for i, lead in enumerate(leads, 1):
     tracking_id = str(uuid.uuid4())
@@ -94,5 +136,4 @@ for i, lead in enumerate(leads, 1):
         time.sleep(RATE_LIMIT_SECONDS)
 
 server.quit()
-print(f"\nDone. Check {LOCAL_SENT_LOG} in your project folder.")
-print(f"Live report: {TRACKING_SERVER}/report")
+print(f"\nAll done. {len(leads)} emails sent.")
