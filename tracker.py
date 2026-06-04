@@ -68,7 +68,6 @@ def track_sent():
 
 @app.route("/download/sent")
 def download_sent():
-    """Download sent_log.csv directly to your computer."""
     if not os.path.isfile(SENT_LOG):
         return "No sent_log.csv yet.", 404
     with open(SENT_LOG, "r", encoding="utf-8") as f:
@@ -81,20 +80,30 @@ def download_sent():
 
 @app.route("/download/opens")
 def download_opens():
-    """Download opens_log.csv directly to your computer."""
-    if not os.path.isfile(OPENS_LOG):
-        return "No opens_log.csv yet.", 404
-    with open(OPENS_LOG, "r", encoding="utf-8") as f:
-        content = f.read()
+    """Download opens as: Pharmacy Name, First Opened At, Times Opened."""
+    sent  = load_sent()
+    opens = load_opens()
+
+    # Only include tracking IDs that actually had opens
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Pharmacy Name", "First Opened At", "Times Opened"])
+
+    for tid, open_times in opens.items():
+        pharmacy_name = sent.get(tid, {}).get("pharmacy_name", "Unknown")
+        first_opened  = open_times[0]
+        times_opened  = len(open_times)
+        writer.writerow([pharmacy_name, first_opened, times_opened])
+
+    output.seek(0)
     return Response(
-        content,
+        output.getvalue(),
         mimetype="text/csv",
         headers={"Content-Disposition": "attachment; filename=opens_log.csv"}
     )
 
 @app.route("/download/report")
 def download_report():
-    """Download the merged report as a CSV — open this directly in Google Sheets."""
     sent  = load_sent()
     opens = load_opens()
 
@@ -119,7 +128,6 @@ def download_report():
         headers={"Content-Disposition": "attachment; filename=email_report.csv"}
     )
 
-
 @app.route("/report")
 def report():
     sent  = load_sent()
@@ -131,9 +139,9 @@ def report():
         open_count = len(open_times)
         first_open = open_times[0] if open_times else "—"
         if open_count:
-            status = f'<span class="opened">Opened {open_count}x time(s)(first: {first_open})</span>'
+            status = f'<span class="opened">Opened {open_count}x time(s) (first: {first_open})</span>'
         else:
-            status = '<span class="not-opened"> Not opened</span>'
+            status = '<span class="not-opened">Not opened</span>'
         rows += f"""
         <tr>
             <td>{info['name']}</td>
