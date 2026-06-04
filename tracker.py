@@ -6,35 +6,32 @@ import time
 
 app = Flask(__name__)
 
-OPENS_LOG  = "opens_log.csv"
-SENT_LOG   = "sent_log.csv"
+OPENS_LOG = "opens_log.csv"
+SENT_LOG  = "sent_log.csv"
 
 BOT_UA_FRAGMENTS = [
-    "googleimageproxy",      
+    "googleimageproxy",       
     "google image proxy",
-    "outlook",               
-    "microsoft",
-    "yahoo! slurp",
-    "ymail",
-    "mimecast",              
+    "safelinks",              
+    "mimecast",               
     "proofpoint",
-    "barracuda",
-    "symantec",
+    "barracuda networks",
+    "symantec.cloud",
     "ironport",
     "messagelabs",
     "postini",
     "spamhaus",
-    "bot",
-    "crawler",
-    "spider",
-    "preview",               
-    "prefetch",
+    "feedfetcher",
+    "preview.mail.ru",
+]
+
+BOT_UA_EXACT = [
+    "mozilla/5.0",  
 ]
 
 def is_bot(user_agent: str) -> bool:
     ua = user_agent.lower()
     return any(frag in ua for frag in BOT_UA_FRAGMENTS)
-
 
 def log_open(tracking_id, ip, user_agent):
     file_exists = os.path.isfile(OPENS_LOG)
@@ -61,6 +58,15 @@ def load_opens():
                 opens.setdefault(tid, []).append(row["opened_at"])
     return opens
 
+def get_sent_time(tracking_id):
+    """Return the sent_at timestamp for a tracking_id, or None."""
+    if os.path.isfile(SENT_LOG):
+        with open(SENT_LOG, newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                if row["tracking_id"] == tracking_id:
+                    return row["sent_at"]
+    return None
+
 TRANSPARENT_GIF = (
     b'\x47\x49\x46\x38\x39\x61\x01\x00\x01\x00\x80\x00\x00'
     b'\xff\xff\xff\x00\x00\x00\x21\xf9\x04\x00\x00\x00\x00'
@@ -74,13 +80,22 @@ def track_open():
     tracking_id = request.args.get("id", "unknown")
     ip          = request.remote_addr
     user_agent  = request.headers.get("User-Agent", "")
+    now_str     = time.strftime("%Y-%m-%d %H:%M:%S")
 
     if is_bot(user_agent):
-        # Silently return the pixel — don't log it
         print(f"[BOT SKIPPED] id={tracking_id} ua={user_agent[:80]}")
-    else:
-        log_open(tracking_id, ip, user_agent)
-        print(f"[OPEN LOGGED] id={tracking_id} ip={ip}")
+        return Response(TRANSPARENT_GIF, mimetype="image/gif",
+                        headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
+
+
+    sent_at = get_sent_time(tracking_id)
+    if sent_at and now_str < sent_at:
+        print(f"[PRE-FETCH SKIPPED] open at {now_str} but sent at {sent_at} — id={tracking_id}")
+        return Response(TRANSPARENT_GIF, mimetype="image/gif",
+                        headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
+
+    log_open(tracking_id, ip, user_agent)
+    print(f"[OPEN LOGGED] id={tracking_id} ip={ip} ua={user_agent[:60]}")
 
     return Response(TRANSPARENT_GIF, mimetype="image/gif",
                     headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
@@ -114,18 +129,14 @@ def download_sent():
 
 @app.route("/download/opens")
 def download_opens():
-    """Pharmacy Name, First Opened At, Times Opened — bots already filtered out."""
     sent  = load_sent()
     opens = load_opens()
-
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["Pharmacy Name", "First Opened At", "Times Opened"])
-
     for tid, open_times in opens.items():
         pharmacy_name = sent.get(tid, {}).get("pharmacy_name", "Unknown")
         writer.writerow([pharmacy_name, open_times[0], len(open_times)])
-
     output.seek(0)
     return Response(output.getvalue(), mimetype="text/csv",
                     headers={"Content-Disposition": "attachment; filename=opens_log.csv"})
@@ -134,11 +145,9 @@ def download_opens():
 def download_report():
     sent  = load_sent()
     opens = load_opens()
-
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["Name", "Email", "Pharmacy", "Sent At", "Open Count", "First Open", "Status"])
-
     for tid, info in sent.items():
         open_times = opens.get(tid, [])
         open_count = len(open_times)
@@ -146,7 +155,6 @@ def download_report():
         status     = "Opened" if open_count else "Not Opened"
         writer.writerow([info["name"], info["email"], info["pharmacy_name"],
                          info["sent_at"], open_count, first_open, status])
-
     output.seek(0)
     return Response(output.getvalue(), mimetype="text/csv",
                     headers={"Content-Disposition": "attachment; filename=email_report.csv"})
