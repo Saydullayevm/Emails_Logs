@@ -10,10 +10,10 @@ OPENS_LOG = "opens_log.csv"
 SENT_LOG  = "sent_log.csv"
 
 BOT_UA_FRAGMENTS = [
-    "googleimageproxy",       
+    "googleimageproxy",
     "google image proxy",
-    "safelinks",              
-    "mimecast",               
+    "safelinks",
+    "mimecast",
     "proofpoint",
     "barracuda networks",
     "symantec.cloud",
@@ -23,10 +23,6 @@ BOT_UA_FRAGMENTS = [
     "spamhaus",
     "feedfetcher",
     "preview.mail.ru",
-]
-
-BOT_UA_EXACT = [
-    "mozilla/5.0",  
 ]
 
 def is_bot(user_agent: str) -> bool:
@@ -58,15 +54,6 @@ def load_opens():
                 opens.setdefault(tid, []).append(row["opened_at"])
     return opens
 
-def get_sent_time(tracking_id):
-    """Return the sent_at timestamp for a tracking_id, or None."""
-    if os.path.isfile(SENT_LOG):
-        with open(SENT_LOG, newline="", encoding="utf-8") as f:
-            for row in csv.DictReader(f):
-                if row["tracking_id"] == tracking_id:
-                    return row["sent_at"]
-    return None
-
 TRANSPARENT_GIF = (
     b'\x47\x49\x46\x38\x39\x61\x01\x00\x01\x00\x80\x00\x00'
     b'\xff\xff\xff\x00\x00\x00\x21\xf9\x04\x00\x00\x00\x00'
@@ -74,28 +61,17 @@ TRANSPARENT_GIF = (
     b'\x44\x01\x00\x3b'
 )
 
-
 @app.route("/track/open")
 def track_open():
     tracking_id = request.args.get("id", "unknown")
     ip          = request.remote_addr
     user_agent  = request.headers.get("User-Agent", "")
-    now_str     = time.strftime("%Y-%m-%d %H:%M:%S")
 
     if is_bot(user_agent):
         print(f"[BOT SKIPPED] id={tracking_id} ua={user_agent[:80]}")
-        return Response(TRANSPARENT_GIF, mimetype="image/gif",
-                        headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
-
-
-    sent_at = get_sent_time(tracking_id)
-    if sent_at and now_str < sent_at:
-        print(f"[PRE-FETCH SKIPPED] open at {now_str} but sent at {sent_at} — id={tracking_id}")
-        return Response(TRANSPARENT_GIF, mimetype="image/gif",
-                        headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
-
-    log_open(tracking_id, ip, user_agent)
-    print(f"[OPEN LOGGED] id={tracking_id} ip={ip} ua={user_agent[:60]}")
+    else:
+        log_open(tracking_id, ip, user_agent)
+        print(f"[OPEN LOGGED] id={tracking_id} ip={ip} ua={user_agent[:60]}")
 
     return Response(TRANSPARENT_GIF, mimetype="image/gif",
                     headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
@@ -116,7 +92,6 @@ def track_sent():
             data.get("sent_at", ""),
         ])
     return jsonify({"status": "ok"})
-
 
 @app.route("/download/sent")
 def download_sent():
@@ -158,7 +133,6 @@ def download_report():
     output.seek(0)
     return Response(output.getvalue(), mimetype="text/csv",
                     headers={"Content-Disposition": "attachment; filename=email_report.csv"})
-
 
 @app.route("/report")
 def report():
