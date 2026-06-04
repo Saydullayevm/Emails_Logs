@@ -8,49 +8,14 @@ app = Flask(__name__)
 
 OPENS_LOG  = "opens_log.csv"
 SENT_LOG   = "sent_log.csv"
-DEBUG_LOG  = "debug_log.csv"   # ← temporary, logs EVERY hit with full UA
 
-BOT_UA_FRAGMENTS = [
-    "googleimageproxy",
-    "google image proxy",
-    "safelinks",
-    "mimecast",
-    "proofpoint",
-    "barracuda networks",
-    "symantec.cloud",
-    "ironport",
-    "messagelabs",
-    "postini",
-    "spamhaus",
-    "feedfetcher",
-    "preview.mail.ru",
-    # Gmail proxy also appears as these — added based on known variants
-    "apis.google",
-    "google.com/bot",
-    "via ggpht.com",
-    "ggpht",
-]
-
-def is_bot(user_agent: str) -> bool:
-    ua = user_agent.lower()
-    return any(frag in ua for frag in BOT_UA_FRAGMENTS)
-
-def log_debug(tracking_id, ip, user_agent, action):
-    """Log EVERY pixel hit so we can see exactly what UA is coming in."""
-    file_exists = os.path.isfile(DEBUG_LOG)
-    with open(DEBUG_LOG, "a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        if not file_exists:
-            writer.writerow(["timestamp", "tracking_id", "ip", "action", "user_agent"])
-        writer.writerow([time.strftime("%Y-%m-%d %H:%M:%S"), tracking_id, ip, action, user_agent])
-
-def log_open(tracking_id, ip, user_agent):
+def log_open(tracking_id, ip):
     file_exists = os.path.isfile(OPENS_LOG)
     with open(OPENS_LOG, "a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         if not file_exists:
-            writer.writerow(["tracking_id", "opened_at", "ip", "user_agent"])
-        writer.writerow([tracking_id, time.strftime("%Y-%m-%d %H:%M:%S"), ip, user_agent])
+            writer.writerow(["tracking_id", "opened_at", "ip"])
+        writer.writerow([tracking_id, time.strftime("%Y-%m-%d %H:%M:%S"), ip])
 
 def load_sent():
     sent = {}
@@ -79,17 +44,8 @@ TRANSPARENT_GIF = (
 @app.route("/track/open")
 def track_open():
     tracking_id = request.args.get("id", "unknown")
-    ip          = request.remote_addr
-    user_agent  = request.headers.get("User-Agent", "")
-
-    if is_bot(user_agent):
-        log_debug(tracking_id, ip, user_agent, "BOT_SKIPPED")
-        print(f"[BOT SKIPPED] id={tracking_id} ua={user_agent}")
-    else:
-        log_debug(tracking_id, ip, user_agent, "OPEN_LOGGED")
-        log_open(tracking_id, ip, user_agent)
-        print(f"[OPEN LOGGED] id={tracking_id} ip={ip} ua={user_agent}")
-
+    ip = request.remote_addr
+    log_open(tracking_id, ip)
     return Response(TRANSPARENT_GIF, mimetype="image/gif",
                     headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
 
@@ -110,82 +66,74 @@ def track_sent():
         ])
     return jsonify({"status": "ok"})
 
-# ── Debug endpoint — shows every pixel hit with full user agent ───────────────
-@app.route("/debug/hits")
-def debug_hits():
-    if not os.path.isfile(DEBUG_LOG):
-        return "No hits logged yet.", 404
-    rows = ""
-    with open(DEBUG_LOG, newline="", encoding="utf-8") as f:
-        for row in csv.DictReader(f):
-            color = "#c00" if row["action"] == "BOT_SKIPPED" else "#1a7a3c"
-            rows += f"""<tr>
-                <td>{row['timestamp']}</td>
-                <td style="font-size:11px;color:#666">{row['tracking_id'][:16]}…</td>
-                <td>{row['ip']}</td>
-                <td style="color:{color};font-weight:600">{row['action']}</td>
-                <td style="font-size:11px;word-break:break-all">{row['user_agent']}</td>
-            </tr>"""
-    return f"""<!DOCTYPE html><html><head><title>Debug: All Pixel Hits</title>
-    <style>body{{font-family:monospace;padding:20px;font-size:13px}}
-    table{{border-collapse:collapse;width:100%}}
-    th,td{{border:1px solid #ddd;padding:6px 10px;text-align:left}}
-    th{{background:#f4f4f4}}</style></head><body>
-    <h3>All Pixel Hits (including bots)</h3>
-    <table><thead><tr><th>Time</th><th>ID</th><th>IP</th><th>Action</th><th>User Agent</th></tr></thead>
-    <tbody>{rows}</tbody></table>
-    <p style="margin-top:12px"><a href="/debug/hits">Refresh</a></p>
-    </body></html>"""
-
-@app.route("/download/debug")
-def download_debug():
-    if not os.path.isfile(DEBUG_LOG):
-        return "No debug log yet.", 404
-    with open(DEBUG_LOG, "r", encoding="utf-8") as f:
-        content = f.read()
-    return Response(content, mimetype="text/csv",
-                    headers={"Content-Disposition": "attachment; filename=debug_log.csv"})
-
 @app.route("/download/sent")
 def download_sent():
+    """Download sent_log.csv directly to your computer."""
     if not os.path.isfile(SENT_LOG):
         return "No sent_log.csv yet.", 404
     with open(SENT_LOG, "r", encoding="utf-8") as f:
         content = f.read()
-    return Response(content, mimetype="text/csv",
-                    headers={"Content-Disposition": "attachment; filename=sent_log.csv"})
+    return Response(
+        content,
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=sent_log.csv"}
+    )
 
 @app.route("/download/opens")
 def download_opens():
-    sent  = load_sent()
+    """Download opens_log.csv with Pharmacy Name, Opened At, and Open Count."""
+    if not os.path.isfile(OPENS_LOG):
+        return "No opens_log.csv yet.", 404
+
+    sent = load_sent()
     opens = load_opens()
+
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["Pharmacy Name", "First Opened At", "Times Opened"])
+    writer.writerow(["Pharmacy Name", "Opened At", "Open Count"])
+
     for tid, open_times in opens.items():
-        pharmacy_name = sent.get(tid, {}).get("pharmacy_name", "Unknown")
-        writer.writerow([pharmacy_name, open_times[0], len(open_times)])
+        if tid in sent:
+            pharmacy_name = sent[tid]["pharmacy_name"]
+            open_count = len(open_times)
+            latest_open = open_times[-1] if open_times else ""   
+            
+            writer.writerow([pharmacy_name, latest_open, open_count])
+
     output.seek(0)
-    return Response(output.getvalue(), mimetype="text/csv",
-                    headers={"Content-Disposition": "attachment; filename=opens_log.csv"})
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=opens_log.csv"}
+    )
 
 @app.route("/download/report")
 def download_report():
+    """Download the merged report as a CSV — open this directly in Google Sheets."""
     sent  = load_sent()
     opens = load_opens()
+
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["Name", "Email", "Pharmacy", "Sent At", "Open Count", "First Open", "Status"])
+
     for tid, info in sent.items():
-        open_times = opens.get(tid, [])
-        open_count = len(open_times)
-        first_open = open_times[0] if open_times else ""
-        status     = "Opened" if open_count else "Not Opened"
-        writer.writerow([info["name"], info["email"], info["pharmacy_name"],
-                         info["sent_at"], open_count, first_open, status])
+        open_times  = opens.get(tid, [])
+        open_count  = len(open_times)
+        first_open  = open_times[0] if open_times else ""
+        status      = "Opened" if open_count else "Not Opened"
+        writer.writerow([
+            info["name"], info["email"], info["pharmacy_name"],
+            info["sent_at"], open_count, first_open, status
+        ])
+
     output.seek(0)
-    return Response(output.getvalue(), mimetype="text/csv",
-                    headers={"Content-Disposition": "attachment; filename=email_report.csv"})
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=email_report.csv"}
+    )
+
 
 @app.route("/report")
 def report():
@@ -198,9 +146,9 @@ def report():
         open_count = len(open_times)
         first_open = open_times[0] if open_times else "—"
         if open_count:
-            status = f'<span class="opened">Opened {open_count}x (first: {first_open})</span>'
+            status = f'<span class="opened">Opened {open_count}x time(s)(first: {first_open})</span>'
         else:
-            status = '<span class="not-opened">Not opened</span>'
+            status = '<span class="not-opened"> Not opened</span>'
         rows += f"""
         <tr>
             <td>{info['name']}</td>
@@ -215,25 +163,29 @@ def report():
     rate   = f"{(opened/total*100):.1f}%" if total else "N/A"
 
     html = f"""<!DOCTYPE html>
-<html><head><title>Email Tracking Report</title>
+<html>
+<head>
+  <title>Email Tracking Report</title>
   <style>
     body {{ font-family: Arial, sans-serif; padding: 24px; background: #f9f9f9; }}
     h2   {{ margin-bottom: 6px; }}
     .summary {{ margin-bottom: 18px; font-size: 15px; color: #333; }}
     .btn-row {{ margin-bottom: 20px; display: flex; gap: 10px; flex-wrap: wrap; }}
-    .btn {{ display: inline-block; padding: 9px 18px; border-radius: 6px;
-            font-size: 14px; font-weight: 600; text-decoration: none; cursor: pointer; border: none; }}
-    .btn-green {{ background: #1a73e8; color: #fff; }}
-    .btn-green:hover {{ background: #1558b0; }}
-    .btn-gray {{ background: #e0e0e0; color: #333; }}
-    .btn-gray:hover {{ background: #c8c8c8; }}
-    .btn-debug {{ background: #f5a623; color: #fff; font-size: 12px; padding: 6px 12px; }}
+    .btn {{
+      display: inline-block; padding: 9px 18px; border-radius: 6px;
+      font-size: 14px; font-weight: 600; text-decoration: none; cursor: pointer;
+      border: none;
+    }}
+    .btn-green  {{ background: #1a73e8; color: #fff; }}
+    .btn-green:hover  {{ background: #1558b0; }}
+    .btn-gray   {{ background: #e0e0e0; color: #333; }}
+    .btn-gray:hover   {{ background: #c8c8c8; }}
     table {{ border-collapse: collapse; width: 100%; background: #fff;
              box-shadow: 0 1px 4px rgba(0,0,0,.08); border-radius: 8px; overflow: hidden; }}
     th, td {{ border: 1px solid #e0e0e0; padding: 9px 14px; text-align: left; font-size: 14px; }}
     th {{ background: #f4f4f4; font-weight: 700; }}
     tr:hover td {{ background: #f0f6ff; }}
-    .opened {{ color: #1a7a3c; font-weight: 600; }}
+    .opened     {{ color: #1a7a3c; font-weight: 600; }}
     .not-opened {{ color: #b00020; }}
   </style>
 </head>
@@ -244,24 +196,33 @@ def report():
     Opened: <strong>{opened}</strong> &nbsp;|&nbsp;
     Open rate: <strong>{rate}</strong>
   </div>
+
   <div class="btn-row">
-    <a class="btn btn-green" href="/download/report">Download Report (Google Sheets / Excel)</a>
-    <a class="btn btn-gray" href="/download/sent">sent_log.csv</a>
-    <a class="btn btn-gray" href="/download/opens">opens_log.csv</a>
-    <a class="btn btn-debug" href="/debug/hits" target="_blank">🔍 Debug: All Pixel Hits</a>
+    <a class="btn btn-green" href="/download/report">
+      Download Report (Google Sheets / Excel)
+    </a>
+    <a class="btn btn-gray" href="/download/sent">
+      sent_log.csv
+    </a>
+    <a class="btn btn-gray" href="/download/opens">
+      opens_log.csv
+    </a>
   </div>
+
   <table>
     <thead><tr>
       <th>Name</th><th>Email</th><th>Pharmacy</th><th>Sent At</th><th>Opening Status</th>
     </tr></thead>
     <tbody>{rows}</tbody>
   </table>
+
   <p style="margin-top:16px; font-size:12px; color:#999;">
-    Auto-refreshes every 60s &nbsp;·&nbsp;
+    Auto-refreshes every 60 s &nbsp;·&nbsp;
     <a href="/report" style="color:#999;">Refresh now</a>
   </p>
   <script>setTimeout(() => location.reload(), 60000);</script>
-</body></html>"""
+</body>
+</html>"""
     return html
 
 if __name__ == "__main__":
