@@ -17,7 +17,7 @@ GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
 FROM_NAME          = os.getenv("FROM_NAME")
 TRACKING_SERVER    = os.getenv("TRACKING_SERVER")
 
-RATE_LIMIT_SECONDS = 60
+RATE_LIMIT_SECONDS = 45
 LOCAL_SENT_LOG     = "sent_log.csv"
 
 _already_saved = False  
