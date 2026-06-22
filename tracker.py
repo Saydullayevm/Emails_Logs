@@ -1,4 +1,4 @@
-from flask import Flask, request, Response, jsonify
+from flask import Flask, request, Response, jsonify, redirect
 import csv
 import os
 import io
@@ -135,6 +135,10 @@ def download_report():
     )
 
 
+@app.route("/")
+def index():
+    return redirect('/report')
+
 @app.route("/report")
 def report():
     sent  = load_sent()
@@ -227,4 +231,6 @@ def report():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
+    print("Registered routes:")
+    print(app.url_map)
     app.run(host="0.0.0.0", port=port)
