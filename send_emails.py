@@ -122,7 +122,7 @@ for i, lead in enumerate(leads, 1):
     msg = MIMEMultipart("alternative")
     msg["From"]    = f"{FROM_NAME} <{GMAIL_ADDRESS}>"
     msg["To"]      = lead["email"]
-    msg["Subject"] = f"PharmaStaff Partnership with {lead['pharmacy_name']}"
+    msg["Subject"] = f"Rx4Route Partnership with {lead['pharmacy_name']}"
     msg.attach(MIMEText(html, "html"))
 
     server.sendmail(GMAIL_ADDRESS, lead["email"], msg.as_string())
